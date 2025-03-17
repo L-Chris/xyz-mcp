@@ -1,0 +1,34 @@
+# 编译后的二进制文件
+/dist/
+/bin/
+
+# Go 特定的忽略项
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# 依赖目录
+/vendor/
+
+# IDE 和编辑器文件
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+
+# 环境变量文件
+.env
+.env.local 

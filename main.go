@@ -6,14 +6,12 @@ import (
 	"github.com/ultrazg/xyz/service"
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
+    "os"
+    "os/signal"
+    "syscall"
 )
 
 func main() {
-	err := service.Start()
-	if err != nil {
-		fmt.Println("fail", err)
-	}
-
     // Create MCP server
     s := server.NewMCPServer(
         "Demo 🚀",
@@ -32,9 +30,38 @@ func main() {
     // Add tool handler
     s.AddTool(tool, helloHandler)
 
-    // Start the stdio server
-    if err := server.ServeStdio(s); err != nil {
-        fmt.Printf("Server error: %v\n", err)
+    // 创建一个通道用于错误处理
+    errChan := make(chan error, 2)
+    
+    // 创建一个通道用于信号处理
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+    
+    // 在 goroutine 中启动 stdio 服务器
+    go func() {
+        if err := server.ServeStdio(s); err != nil {
+            fmt.Printf("Server error: %v\n", err)
+            errChan <- err
+        }
+    }()
+    
+    // 在另一个 goroutine 中启动服务
+    go func() {
+        err := service.Start()
+        if err != nil {
+            fmt.Println("Service failed:", err)
+            errChan <- err
+        }
+    }()
+    
+    // 等待错误或信号
+    select {
+    case err := <-errChan:
+        fmt.Printf("程序因错误退出: %v\n", err)
+    case sig := <-sigChan:
+        fmt.Printf("收到信号: %v，正在关闭...\n", sig)
+        // 这里可以添加清理代码
+        // 例如：service.Stop() 或其他清理函数
     }
 }
 
