@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -23,17 +24,26 @@ func main() {
 		"1.0.0",
 	)
 
-	// Add tool
-	tool := mcp.NewTool("sendCode",
+	// Add tool handler
+	s.AddTool(mcp.NewTool("sendCode",
 		mcp.WithDescription("用于接收验证码"),
 		mcp.WithString("mobilePhoneNumber",
 			mcp.Required(),
 			mcp.Description("手机号"),
 		),
-	)
+	), handleSendCode)
 
-	// Add tool handler
-	s.AddTool(tool, helloSendCode)
+	s.AddTool(mcp.NewTool("login",
+		mcp.WithDescription("登录"),
+		mcp.WithString("mobilePhoneNumber",
+			mcp.Required(),
+			mcp.Description("手机号"),
+		),
+		mcp.WithString("verifyCode",
+			mcp.Required(),
+			mcp.Description("验证码"),
+		),
+	), handleLogin)
 
 	// 创建一个通道用于错误处理
 	errChan := make(chan error, 2)
@@ -73,7 +83,7 @@ func main() {
 	}
 }
 
-func helloSendCode(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func handleSendCode(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mobilePhoneNumber, ok := request.Params.Arguments["mobilePhoneNumber"].(string)
 	if !ok {
 		return mcp.NewToolResultError("mobilePhoneNumber must be a string"), nil
@@ -97,7 +107,74 @@ func helloSendCode(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallT
 		return mcp.NewToolResultError("发送验证码失败"), err
 	}
 
-	fmt.Printf("登录响应: %+v\n", result)
+	return mcp.NewToolResultText("发送验证码成功，请提供验证码给我完成登录"), nil
+}
 
-	return mcp.NewToolResultText("发送验证码成功"), nil
+func handleLogin(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// 定义登录参数结构体
+	type LoginParams struct {
+		MobilePhoneNumber string `json:"mobilePhoneNumber"`
+		VerifyCode        string `json:"verifyCode"`
+	}
+
+	// 提取参数并进行类型断言
+	mobilePhoneNumber, ok1 := request.Params.Arguments["mobilePhoneNumber"].(string)
+	verifyCode, ok2 := request.Params.Arguments["verifyCode"].(string)
+	if !ok1 || !ok2 {
+		return mcp.NewToolResultError("手机号或验证码格式不正确"), nil
+	}
+
+	// 准备请求
+	client := resty.New()
+	var result map[string]interface{}
+	_, err := client.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody(LoginParams{
+			MobilePhoneNumber: mobilePhoneNumber,
+			VerifyCode:        verifyCode,
+		}).
+		SetResult(&result).
+		Post(baseURL + "/login")
+
+	if err != nil {
+		return mcp.NewToolResultError("登录请求失败: " + err.Error()), err
+	}
+	// 将完整响应保存到debug.json文件
+	jsonData, err := json.Marshal(result)
+	if err != nil {
+		fmt.Printf("JSON编码失败: %v\n", err)
+	} else {
+		err = os.WriteFile("debug.json", jsonData, 0644)
+		if err != nil {
+			fmt.Printf("保存响应内容失败: %v\n", err)
+		} else {
+			fmt.Println("响应内容已保存至debug.json")
+		}
+	}
+
+	// 提取令牌
+	var accessToken, refreshToken string
+	if data, ok := result["data"].(map[string]interface{}); ok {
+		if innerData, ok := data["data"].(map[string]interface{}); ok {
+			accessToken, _ = innerData["x-jike-access-token"].(string)
+			refreshToken, _ = innerData["x-jike-refresh-token"].(string)
+		}
+	}
+
+	// 保存令牌到本地文件
+	if accessToken != "" && refreshToken != "" {
+		tokenData := fmt.Sprintf(`{
+  "accessToken": "%s",
+  "refreshToken": "%s"
+}`, accessToken, refreshToken)
+
+		err := os.WriteFile("tokens.json", []byte(tokenData), 0644)
+		if err != nil {
+			return mcp.NewToolResultError("令牌保存失败: " + err.Error()), err
+		}
+
+		return mcp.NewToolResultText("登录成功！令牌已保存到本地 tokens.json 文件"), nil
+	}
+
+	return mcp.NewToolResultError("登录成功但未能获取令牌"), nil
 }
