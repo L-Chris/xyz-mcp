@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -8,10 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/olekukonko/tablewriter"
 	"github.com/ultrazg/xyz/service"
 )
 
@@ -284,13 +287,79 @@ func handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallTo
 		return mcp.NewToolResultError(fmt.Sprintf("搜索失败，状态码: %d", resp.StatusCode())), nil
 	}
 
-	// 格式化返回结果
-	jsonResult, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError("格式化结果失败: " + err.Error()), err
+	// 使用bytes.Buffer创建输出缓冲区
+	var buf bytes.Buffer
+	table := tablewriter.NewWriter(&buf)
+
+	// 设置表头
+	table.SetHeader([]string{"标题", "发布日期", "播放数", "评论数", "收藏数", "链接"})
+
+	// 设置markdown格式
+	table.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
+	table.SetCenterSeparator("|")
+
+	// 从结果中提取数据数组
+	if data, ok := result["data"].(map[string]interface{}); ok {
+		if items, ok := data["data"].([]interface{}); ok {
+			for _, item := range items {
+				if episode, ok := item.(map[string]interface{}); ok {
+					// 提取标题
+					title := episode["title"].(string)
+
+					// 提取并格式化发布日期
+					var pubDate string
+					if pubDateStr, ok := episode["pubDate"].(string); ok {
+						// 解析ISO 8601格式的时间
+						if t, err := time.Parse(time.RFC3339Nano, pubDateStr); err == nil {
+							pubDate = t.Format("2006/01/02")
+						} else {
+							pubDate = "未知日期"
+						}
+					}
+
+					// 提取统计数据
+					playCount := "0"
+					if pc, ok := episode["playCount"].(float64); ok {
+						playCount = fmt.Sprintf("%.0f", pc)
+					}
+
+					commentCount := "0"
+					if cc, ok := episode["commentCount"].(float64); ok {
+						commentCount = fmt.Sprintf("%.0f", cc)
+					}
+
+					favoriteCount := "0"
+					if fc, ok := episode["favoriteCount"].(float64); ok {
+						favoriteCount = fmt.Sprintf("%.0f", fc)
+					}
+
+					// 提取URL
+					url := ""
+					if media, ok := episode["media"].(map[string]interface{}); ok {
+						if source, ok := media["source"].(map[string]interface{}); ok {
+							if u, ok := source["url"].(string); ok {
+								url = u
+							}
+						}
+					}
+
+					// 添加表格行
+					table.Append([]string{
+						title,
+						pubDate,
+						playCount,
+						commentCount,
+						favoriteCount,
+						url,
+					})
+				}
+			}
+		}
 	}
 
-	return mcp.NewToolResultText(string(jsonResult)), nil
+	// 渲染表格
+	table.Render()
+	return mcp.NewToolResultText(buf.String()), nil
 }
 
 // 添加新的处理函数
