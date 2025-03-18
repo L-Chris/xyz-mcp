@@ -20,7 +20,7 @@ var baseURL = "http://127.0.0.1:8080"
 func main() {
 	// Create MCP server
 	s := server.NewMCPServer(
-		"Demo 🚀",
+		"小宇宙 mcp server",
 		"1.0.0",
 	)
 
@@ -139,26 +139,12 @@ func handleLogin(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 	if err != nil {
 		return mcp.NewToolResultError("登录请求失败: " + err.Error()), err
 	}
-	// 将完整响应保存到debug.json文件
-	jsonData, err := json.Marshal(result)
-	if err != nil {
-		fmt.Printf("JSON编码失败: %v\n", err)
-	} else {
-		err = os.WriteFile("debug.json", jsonData, 0644)
-		if err != nil {
-			fmt.Printf("保存响应内容失败: %v\n", err)
-		} else {
-			fmt.Println("响应内容已保存至debug.json")
-		}
-	}
 
 	// 提取令牌
 	var accessToken, refreshToken string
 	if data, ok := result["data"].(map[string]interface{}); ok {
-		if innerData, ok := data["data"].(map[string]interface{}); ok {
-			accessToken, _ = innerData["x-jike-access-token"].(string)
-			refreshToken, _ = innerData["x-jike-refresh-token"].(string)
-		}
+		accessToken, _ = data["x-jike-access-token"].(string)
+		refreshToken, _ = data["x-jike-refresh-token"].(string)
 	}
 
 	// 保存令牌到本地文件
@@ -168,13 +154,13 @@ func handleLogin(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
   "refreshToken": "%s"
 }`, accessToken, refreshToken)
 
-		err := os.WriteFile("tokens.json", []byte(tokenData), 0644)
+		err := os.WriteFile("./data/tokens.json", []byte(tokenData), 0644)
 		if err != nil {
 			return mcp.NewToolResultError("令牌保存失败: " + err.Error()), err
 		}
 
-		return mcp.NewToolResultText("登录成功！令牌已保存到本地 tokens.json 文件"), nil
+		return mcp.NewToolResultText("登录成功！令牌已保存到本地 ./data/tokens.json 文件"), nil
 	}
-
-	return mcp.NewToolResultError("登录成功但未能获取令牌"), nil
+	jsonStr, _ := json.Marshal(result)
+	return mcp.NewToolResultError("登录成功但未能获取令牌" + string(jsonStr)), nil
 }
