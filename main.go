@@ -182,12 +182,12 @@ func handleLogin(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
   "x-jike-refresh-token": "%s"
 }`, accessToken, refreshToken)
 
-		err := os.WriteFile("./data/tokens.json", []byte(tokenData), 0644)
+		err := os.WriteFile("./xyz-mcp.json", []byte(tokenData), 0644)
 		if err != nil {
 			return mcp.NewToolResultError("令牌保存失败: " + err.Error()), err
 		}
 
-		return mcp.NewToolResultText("登录成功！令牌已保存到本地 ./data/tokens.json 文件"), nil
+		return mcp.NewToolResultText("登录成功！令牌已保存到本地 ./xyz-mcp.json 文件"), nil
 	}
 	jsonStr, _ := json.Marshal(result)
 	return mcp.NewToolResultError("登录成功但未能获取令牌" + string(jsonStr)), nil
@@ -238,7 +238,7 @@ func handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallTo
 	client := resty.New()
 
 	// 从文件读取令牌
-	tokenData, err := os.ReadFile("./data/tokens.json")
+	tokenData, err := os.ReadFile("./xyz-mcp.json")
 	if err != nil {
 		return mcp.NewToolResultError("读取令牌失败，请先登录: " + err.Error()), err
 	}
@@ -365,7 +365,7 @@ func handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallTo
 // 添加新的处理函数
 func handleRefreshToken(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// 从文件读取当前的token
-	tokenData, err := os.ReadFile("./data/tokens.json")
+	tokenData, err := os.ReadFile("./xyz-mcp.json")
 	if err != nil {
 		return mcp.NewToolResultError("读取令牌失败，请先登录: " + err.Error()), err
 	}
@@ -411,7 +411,7 @@ func handleRefreshToken(ctx context.Context, request mcp.CallToolRequest) (*mcp.
   "x-jike-refresh-token": "%s"
 }`, newAccessToken, newRefreshToken)
 
-		err := os.WriteFile("./data/tokens.json", []byte(tokenData), 0644)
+		err := os.WriteFile("./xyz-mcp.json", []byte(tokenData), 0644)
 		if err != nil {
 			return mcp.NewToolResultError("新令牌保存失败: " + err.Error()), err
 		}
