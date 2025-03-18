@@ -54,7 +54,7 @@ func main() {
 		),
 		mcp.WithString("type",
 			mcp.Description("搜索类型，可选值：ALL（全部）、PODCAST（节目）、EPISODE（单集）、USER（用户）"),
-			mcp.DefaultString("PODCAST"),
+			mcp.DefaultString("EPISODE"),
 		),
 		mcp.WithString("pid",
 			mcp.Description("如果要在节目内搜索单集，需要传入节目的pid，并将type参数指定为EPISODE"),
@@ -64,6 +64,11 @@ func main() {
 			mcp.Description("分页查询的条件，由接口返回"),
 		),
 	), handleSearch)
+
+	// 添加刷新token工具
+	s.AddTool(mcp.NewTool("refreshToken",
+		mcp.WithDescription("刷新token，当接口返回401时调用此接口以获取有效的token信息"),
+	), handleRefreshToken)
 
 	// 创建一个通道用于错误处理
 	errChan := make(chan error, 2)
@@ -170,8 +175,8 @@ func handleLogin(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 	// 保存令牌到本地文件
 	if accessToken != "" && refreshToken != "" {
 		tokenData := fmt.Sprintf(`{
-  "accessToken": "%s",
-  "refreshToken": "%s"
+  "x-jike-access-token": "%s",
+  "x-jike-refresh-token": "%s"
 }`, accessToken, refreshToken)
 
 		err := os.WriteFile("./data/tokens.json", []byte(tokenData), 0644)
@@ -193,7 +198,7 @@ func handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallTo
 	}
 
 	// 提取可选参数并设置默认值
-	searchType := "PODCAST" // 设置默认值
+	searchType := "EPISODE" // 设置默认值
 	if typeArg, ok := request.Params.Arguments["type"]; ok && typeArg != nil {
 		if typeStr, ok := typeArg.(string); ok {
 			searchType = typeStr
@@ -286,4 +291,65 @@ func handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallTo
 	}
 
 	return mcp.NewToolResultText(string(jsonResult)), nil
+}
+
+// 添加新的处理函数
+func handleRefreshToken(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// 从文件读取当前的token
+	tokenData, err := os.ReadFile("./data/tokens.json")
+	if err != nil {
+		return mcp.NewToolResultError("读取令牌失败，请先登录: " + err.Error()), err
+	}
+
+	var tokens map[string]string
+	if err := json.Unmarshal(tokenData, &tokens); err != nil {
+		return mcp.NewToolResultError("解析令牌失败: " + err.Error()), err
+	}
+
+	currentAccessToken := tokens["x-jike-access-token"]
+	currentRefreshToken := tokens["x-jike-refresh-token"]
+	if currentAccessToken == "" || currentRefreshToken == "" {
+		return mcp.NewToolResultError("无效的令牌信息，请重新登录"), nil
+	}
+
+	// 发送刷新token请求
+	client := resty.New()
+	var result map[string]interface{}
+	_, err = client.R().
+		SetHeader("Content-Type", "application/json").
+		SetBody(map[string]string{
+			"x-jike-access-token":  currentAccessToken,
+			"x-jike-refresh-token": currentRefreshToken,
+		}).
+		SetResult(&result).
+		Post(baseURL + "/refresh_token")
+
+	if err != nil {
+		return mcp.NewToolResultError("刷新token请求失败: " + err.Error()), err
+	}
+
+	// 提取新的令牌
+	var newAccessToken, newRefreshToken string
+	if data, ok := result["data"].(map[string]interface{}); ok {
+		newAccessToken, _ = data["x-jike-access-token"].(string)
+		newRefreshToken, _ = data["x-jike-refresh-token"].(string)
+	}
+
+	// 保存新的令牌到本地文件
+	if newAccessToken != "" && newRefreshToken != "" {
+		tokenData := fmt.Sprintf(`{
+  "x-jike-access-token": "%s",
+  "x-jike-refresh-token": "%s"
+}`, newAccessToken, newRefreshToken)
+
+		err := os.WriteFile("./data/tokens.json", []byte(tokenData), 0644)
+		if err != nil {
+			return mcp.NewToolResultError("新令牌保存失败: " + err.Error()), err
+		}
+
+		return mcp.NewToolResultText("token刷新成功！新的令牌已保存到本地"), nil
+	}
+
+	jsonStr, _ := json.Marshal(result)
+	return mcp.NewToolResultError("刷新token失败，未能获取新的令牌: " + string(jsonStr)), nil
 }
