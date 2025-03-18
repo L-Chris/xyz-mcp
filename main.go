@@ -45,6 +45,26 @@ func main() {
 		),
 	), handleLogin)
 
+	// 添加搜索工具
+	s.AddTool(mcp.NewTool("search",
+		mcp.WithDescription("搜索小宇宙内容"),
+		mcp.WithString("keyword",
+			mcp.Required(),
+			mcp.Description("搜索关键词"),
+		),
+		mcp.WithString("type",
+			mcp.Description("搜索类型，可选值：ALL（全部）、PODCAST（节目）、EPISODE（单集）、USER（用户）"),
+			mcp.DefaultString("PODCAST"),
+		),
+		mcp.WithString("pid",
+			mcp.Description("如果要在节目内搜索单集，需要传入节目的pid，并将type参数指定为EPISODE"),
+			mcp.DefaultString(""),
+		),
+		mcp.WithString("loadMoreKey",
+			mcp.Description("分页查询的条件，由接口返回"),
+		),
+	), handleSearch)
+
 	// 创建一个通道用于错误处理
 	errChan := make(chan error, 2)
 
@@ -163,4 +183,107 @@ func handleLogin(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 	}
 	jsonStr, _ := json.Marshal(result)
 	return mcp.NewToolResultError("登录成功但未能获取令牌" + string(jsonStr)), nil
+}
+
+func handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// 提取参数
+	keyword, ok1 := request.Params.Arguments["keyword"].(string)
+	if !ok1 || keyword == "" {
+		return mcp.NewToolResultError("搜索关键词不能为空"), nil
+	}
+
+	// 提取可选参数并设置默认值
+	searchType := "PODCAST" // 设置默认值
+	if typeArg, ok := request.Params.Arguments["type"]; ok && typeArg != nil {
+		if typeStr, ok := typeArg.(string); ok {
+			searchType = typeStr
+		}
+	}
+
+	// 提取 pid 参数（可选）
+	pid := ""
+	if pidArg, ok := request.Params.Arguments["pid"]; ok && pidArg != nil {
+		if pidStr, ok := pidArg.(string); ok {
+			pid = pidStr
+		}
+	}
+
+	// 提取 loadMoreKey 参数（可选）
+	var loadMoreKeyObj map[string]interface{}
+	if lmkArg, ok := request.Params.Arguments["loadMoreKey"]; ok && lmkArg != nil {
+		// 如果是字符串，尝试解析为JSON对象
+		if lmkStr, ok := lmkArg.(string); ok && lmkStr != "" {
+			err := json.Unmarshal([]byte(lmkStr), &loadMoreKeyObj)
+			if err != nil {
+				// 如果解析失败，直接使用字符串
+				loadMoreKeyObj = map[string]interface{}{
+					"loadMoreKey": lmkStr,
+				}
+			}
+		} else if lmkMap, ok := lmkArg.(map[string]interface{}); ok {
+			// 如果已经是对象，直接使用
+			loadMoreKeyObj = lmkMap
+		}
+	}
+
+	// 构建请求
+	client := resty.New()
+
+	// 从文件读取令牌
+	tokenData, err := os.ReadFile("./data/tokens.json")
+	if err != nil {
+		return mcp.NewToolResultError("读取令牌失败，请先登录: " + err.Error()), err
+	}
+
+	var tokens map[string]string
+	if err := json.Unmarshal(tokenData, &tokens); err != nil {
+		return mcp.NewToolResultError("解析令牌失败: " + err.Error()), err
+	}
+
+	accessToken := tokens["x-jike-access-token"]
+	if accessToken == "" {
+		return mcp.NewToolResultError("无效的访问令牌，请重新登录"), nil
+	}
+
+	// 构建搜索请求体
+	requestBody := map[string]interface{}{
+		"keyword": keyword,
+		"type":    searchType,
+	}
+
+	// 如果有 pid 参数且 type 是 EPISODE，添加到请求体
+	if pid != "" && searchType == "EPISODE" {
+		requestBody["pid"] = pid
+	}
+
+	// 如果有 loadMoreKey 参数，添加到请求体
+	if loadMoreKeyObj != nil {
+		requestBody["loadMoreKey"] = loadMoreKeyObj
+	}
+
+	// 发送请求
+	var result map[string]interface{}
+	resp, err := client.R().
+		SetHeader("Content-Type", "application/json").
+		SetHeader("x-jike-access-token", accessToken). // 修正了请求头名称
+		SetBody(requestBody).
+		SetResult(&result).
+		Post(baseURL + "/search")
+
+	if err != nil {
+		return mcp.NewToolResultError("搜索请求失败: " + err.Error()), err
+	}
+
+	// 检查状态码
+	if resp.StatusCode() != 200 {
+		return mcp.NewToolResultError(fmt.Sprintf("搜索失败，状态码: %d", resp.StatusCode())), nil
+	}
+
+	// 格式化返回结果
+	jsonResult, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return mcp.NewToolResultError("格式化结果失败: " + err.Error()), err
+	}
+
+	return mcp.NewToolResultText(string(jsonResult)), nil
 }
