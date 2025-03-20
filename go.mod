@@ -1,4 +1,4 @@
-module xyz-mcp
+module github.com/L-Chris/xyz-mcp
 
 go 1.23.7
 
