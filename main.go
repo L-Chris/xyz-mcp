@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -24,11 +25,24 @@ var baseURL = "http://127.0.0.1:8080"
 var (
 	accessToken  string
 	refreshToken string
+	// token文件相关路径
+	tokenDir  string
+	tokenFile string
 )
 
 func main() {
+	// 初始化token路径
+	if err := initTokenPath(); err != nil {
+		fmt.Printf("初始化token路径失败: %v\n", err)
+		return
+	}
+
+	// 创建一个带取消功能的context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// 启动前加载token
-	if err := loadTokensFromFile(); err != nil {
+	if err := loadTokens(); err != nil {
 		fmt.Printf("加载token失败: %v\n", err)
 	}
 
@@ -100,15 +114,18 @@ func main() {
 		if err := server.ServeStdio(s); err != nil {
 			fmt.Printf("Server error: %v\n", err)
 			errChan <- err
+			cancel() // 触发context取消
 		}
 	}()
 
 	// 在另一个 goroutine 中启动服务
 	go func() {
+		// 假设service.Start支持context，如果不支持需要修改service包
 		err := service.Start()
 		if err != nil {
 			fmt.Println("Service failed:", err)
 			errChan <- err
+			cancel() // 触发context取消
 		}
 	}()
 
@@ -116,10 +133,16 @@ func main() {
 	select {
 	case err := <-errChan:
 		fmt.Printf("程序因错误退出: %v\n", err)
+		// 这里不需要调用cancel()，因为发送错误的goroutine已经调用过了
 	case sig := <-sigChan:
 		fmt.Printf("收到信号: %v，正在关闭...\n", sig)
-		// 例如：service.Stop() 或其他清理函数
+		cancel() // 触发context取消
+	case <-ctx.Done():
+		fmt.Println("正在关闭所有服务...")
 	}
+
+	// 给清理操作留出一些时间
+	time.Sleep(time.Second)
 }
 
 func handleSendCode(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -396,7 +419,38 @@ func handleRefreshToken(ctx context.Context, request mcp.CallToolRequest) (*mcp.
 	return mcp.NewToolResultError("刷新token失败，未能获取新的令牌: " + string(jsonStr)), nil
 }
 
-// 添加token管理相关函数
+// 添加初始化路径的函数
+func initTokenPath() error {
+	// 获取用户主目录
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("获取用户主目录失败: %v", err)
+	}
+
+	// 设置完整的目录路径
+	tokenDir = filepath.Join(homeDir, "mcp", "xyz-mcp")
+	tokenFile = filepath.Join(tokenDir, "xyz-mcp.json")
+
+	// 创建目录（如果不存在）
+	if err := os.MkdirAll(tokenDir, 0755); err != nil {
+		return fmt.Errorf("创建目录失败: %v", err)
+	}
+
+	// 检查token文件是否存在，不存在则创建
+	if _, err := os.Stat(tokenFile); os.IsNotExist(err) {
+		// 初始化空token
+		accessToken = ""
+		refreshToken = ""
+		// 创建初始化的token文件
+		initialData := `{ "x-jike-access-token": "", "x-jike-refresh-token": "" }`
+		if err := os.WriteFile(tokenFile, []byte(initialData), 0644); err != nil {
+			return fmt.Errorf("创建token文件失败: %v", err)
+		}
+	}
+
+	return nil
+}
+
 func saveTokens(newAccessToken, newRefreshToken string) error {
 	// 更新全局变量
 	accessToken = newAccessToken
@@ -408,28 +462,14 @@ func saveTokens(newAccessToken, newRefreshToken string) error {
   "x-jike-refresh-token": "%s"
 }`, accessToken, refreshToken)
 
-	return os.WriteFile("./xyz-mcp.json", []byte(tokenData), 0644)
+	return os.WriteFile(tokenFile, []byte(tokenData), 0644)
 }
 
-func loadTokensFromFile() error {
+func loadTokens() error {
 	// 读取文件
-	tokenData, err := os.ReadFile("./xyz-mcp.json")
+	tokenData, err := os.ReadFile(tokenFile)
 	if err != nil {
-		// 如果文件不存在，创建新文件并初始化token
-		if os.IsNotExist(err) {
-			accessToken = ""
-			refreshToken = ""
-			// 创建初始化的token文件
-			initialData := `{
-  "x-jike-access-token": "",
-  "x-jike-refresh-token": ""
-}`
-			if err := os.WriteFile("./xyz-mcp.json", []byte(initialData), 0644); err != nil {
-				return fmt.Errorf("创建token文件失败: %v", err)
-			}
-			return nil
-		}
-		return err
+		return fmt.Errorf("读取token文件失败: %v", err)
 	}
 
 	// 解析现有文件
