@@ -30,9 +30,15 @@ var (
 	tokenFile string
 )
 
+// 定义token结构体
+type TokenConfig struct {
+	AccessToken  string `json:"x-jike-access-token"`
+	RefreshToken string `json:"x-jike-refresh-token"`
+}
+
 func main() {
 	// 初始化token路径
-	if err := initTokenPath(); err != nil {
+	if err := initTokens(); err != nil {
 		fmt.Printf("初始化token路径失败: %v\n", err)
 		return
 	}
@@ -420,7 +426,7 @@ func handleRefreshToken(ctx context.Context, request mcp.CallToolRequest) (*mcp.
 }
 
 // 添加初始化路径的函数
-func initTokenPath() error {
+func initTokens() error {
 	// 获取用户主目录
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -438,12 +444,18 @@ func initTokenPath() error {
 
 	// 检查token文件是否存在，不存在则创建
 	if _, err := os.Stat(tokenFile); os.IsNotExist(err) {
-		// 初始化空token
-		accessToken = ""
-		refreshToken = ""
-		// 创建初始化的token文件
-		initialData := `{ "x-jike-access-token": "", "x-jike-refresh-token": "" }`
-		if err := os.WriteFile(tokenFile, []byte(initialData), 0644); err != nil {
+		// 使用结构体创建初始化数据
+		config := TokenConfig{
+			AccessToken:  "",
+			RefreshToken: "",
+		}
+
+		data, err := json.MarshalIndent(config, "", "  ")
+		if err != nil {
+			return fmt.Errorf("序列化token失败: %v", err)
+		}
+
+		if err := os.WriteFile(tokenFile, data, 0644); err != nil {
 			return fmt.Errorf("创建token文件失败: %v", err)
 		}
 	}
@@ -456,29 +468,36 @@ func saveTokens(newAccessToken, newRefreshToken string) error {
 	accessToken = newAccessToken
 	refreshToken = newRefreshToken
 
-	// 保存到文件
-	tokenData := fmt.Sprintf(`{
-  "x-jike-access-token": "%s",
-  "x-jike-refresh-token": "%s"
-}`, accessToken, refreshToken)
+	// 创建token配置对象
+	config := TokenConfig{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+	}
 
-	return os.WriteFile(tokenFile, []byte(tokenData), 0644)
+	// 使用MarshalIndent生成格式化的JSON
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化token失败: %v", err)
+	}
+
+	return os.WriteFile(tokenFile, data, 0644)
 }
 
 func loadTokens() error {
 	// 读取文件
-	tokenData, err := os.ReadFile(tokenFile)
+	data, err := os.ReadFile(tokenFile)
 	if err != nil {
 		return fmt.Errorf("读取token文件失败: %v", err)
 	}
 
-	// 解析现有文件
-	var tokens map[string]string
-	if err := json.Unmarshal(tokenData, &tokens); err != nil {
-		return err
+	// 解析到结构体
+	var config TokenConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("解析token文件失败: %v", err)
 	}
 
-	accessToken = tokens["x-jike-access-token"]
-	refreshToken = tokens["x-jike-refresh-token"]
+	// 更新全局变量
+	accessToken = config.AccessToken
+	refreshToken = config.RefreshToken
 	return nil
 }
